@@ -84,8 +84,10 @@ jobs:
         run: |
           set -euo pipefail
           ARGS=()
-          if [ -n "${GCHILD_API_BASE_URL:-}" ]; then
+          if [[ "${GCHILD_API_BASE_URL:-}" == https://* ]]; then
             ARGS+=("-Pgchild.apiBaseUrl=${GCHILD_API_BASE_URL}")
+          elif [ -n "${GCHILD_API_BASE_URL:-}" ]; then
+            echo "GCHILD_API_BASE_URL bukan https://; release dibangun tanpa URL server."
           fi
           if [ -n "${GCHILD_KEYSTORE_BASE64:-}" ] \
             && [ -n "${GCHILD_KEYSTORE_PASSWORD:-}" ] \

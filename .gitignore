@@ -1,0 +1,56 @@
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets/
+credentials/
+
+# Node.js
+node_modules/
+dist/
+build/
+coverage/
+*.log
+npm-debug.log*
+.yarn/
+.pnpm-store/
+
+# Local database and runtime data
+data/
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# Android / Gradle
+.gradle/
+.kotlin/
+local.properties
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE and OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test and tool output
+playwright-report/
+test-results/
+*.tmp

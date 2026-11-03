@@ -1,0 +1,21 @@
+{
+  "name": "gchild",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "workspaces": [
+    "apps/backend",
+    "tools/device-simulator"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck -w apps/backend && npm run typecheck -w tools/device-simulator",
+    "test": "npm run test -w apps/backend && npm run test -w tools/device-simulator",
+    "migrate": "npm run migrate -w apps/backend",
+    "dev": "npm run dev -w apps/backend",
+    "admin:create": "npm run admin:create -w apps/backend",
+    "simulate": "npm run start -w tools/device-simulator"
+  }
+}

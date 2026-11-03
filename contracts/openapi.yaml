@@ -1,0 +1,473 @@
+openapi: 3.0.3
+info:
+  title: GChild API
+  version: 0.2.0-stage1-telegram
+  description: |
+    Kontrak API GChild Tahap 1 (backend + kanal Parent bot Telegram).
+
+    Kanal Parent adalah bot Telegram, bukan HTTP; lihat `docs/DECISIONS.md` ADR-001.
+    Karena itu kontrak ini hanya memuat endpoint Companion (`/v1/device-self/*`,
+    `/v1/enrollment/*`) dan endpoint operasional. Endpoint Parent HTTP dari usulan
+    Tahap 0 (`/v1/auth/*`, `/v1/devices*`, `/v1/pairing-requests*`) tidak
+    diimplementasikan dan tidak lagi menjadi bagian kontrak.
+
+    Aturan yang mengikat:
+    - Perangkat memakai header `Authorization: Device <deviceCredential>`.
+    - Enrollment memakai header `X-Enrollment-Token`.
+    - Command yang kedaluwarsa tidak boleh dieksekusi; lihat
+      `docs/COMMAND_STATE_MACHINE.md`.
+    - `observedAt` berasal dari perangkat; `receivedAt` dari server.
+    - `expiresAt` dihitung server; waktu perangkat tidak dipakai untuk expiry.
+    - Tidak ada endpoint yang membocorkan keberadaan resource keluarga lain (404).
+  contact:
+    name: GChild project
+  license:
+    name: Proprietary
+  x-decisions: docs/DECISIONS.md
+  x-command-state-machine: docs/COMMAND_STATE_MACHINE.md
+  x-threat-model: docs/THREAT_MODEL.md
+servers:
+  - url: http://127.0.0.1:3000
+    description: Local development only; production memakai HTTPS melalui Caddy.
+tags:
+  - name: Enrollment
+    description: Bootstrap Companion sebelum credential aktif.
+  - name: DeviceSelf
+    description: Endpoint yang hanya boleh dipanggil Companion dengan device credential.
+  - name: Operational
+    description: Health/readiness tanpa secret.
+
+paths:
+  /v1/healthz:
+    get:
+      tags: [Operational]
+      operationId: health
+      summary: Liveness minimal
+      security: []
+      responses:
+        '200':
+          description: Server hidup.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, version, uptimeSeconds]
+                properties:
+                  status: { type: string, enum: [ok] }
+                  version: { type: string }
+                  uptimeSeconds: { type: integer, minimum: 0 }
+
+  /v1/readyz:
+    get:
+      tags: [Operational]
+      operationId: ready
+      summary: Kesiapan dependency (database)
+      security: []
+      responses:
+        '200':
+          description: Siap melayani.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, checks]
+                properties:
+                  status: { type: string, enum: [ready] }
+                  checks:
+                    type: object
+                    properties:
+                      database: { type: string, enum: [ok] }
+        '503':
+          description: Dependency belum siap.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [not_ready] }
+                  checks:
+                    type: object
+                    properties:
+                      database: { type: string, enum: [unavailable] }
+
+  /v1/enrollment/claim:
+    post:
+      tags: [Enrollment]
+      operationId: claimEnrollment
+      summary: Companion mengklaim kode pairing
+      description: |
+        Kode pairing 8 digit + device secret 32+ byte yang dibuat Companion. Server
+        menyimpan HMAC kode dan hash secret; tidak ada plaintext. Retry dengan kode dan
+        secret yang sama bersifat idempotent (claim token dirotasi). Kode yang sudah
+        dipakai perangkat lain ditolak 409.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimRequest'
+      responses:
+        '201':
+          description: Claim diterima; perangkat PENDING, credential belum aktif.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/enrollment/{id}/confirm-local:
+    post:
+      tags: [Enrollment]
+      operationId: confirmLocalConsent
+      summary: Persetujuan lokal di perangkat
+      description: |
+        Wajib sebelum Parent dapat menyetujui. Menolak (`accepted=false`) membuat
+        permintaan REJECTED dan mencabut perangkat pending.
+      parameters:
+        - $ref: '#/components/parameters/EnrollmentId'
+      security:
+        - enrollmentToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accepted, disclosureVersion]
+              properties:
+                accepted: { type: boolean }
+                disclosureVersion: { type: string, maxLength: 32 }
+      responses:
+        '200':
+          description: Status enrollment terkini.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+
+  /v1/enrollment/{id}:
+    get:
+      tags: [Enrollment]
+      operationId: getEnrollment
+      summary: Companion memeriksa status enrollment
+      parameters:
+        - $ref: '#/components/parameters/EnrollmentId'
+      security:
+        - enrollmentToken: []
+      responses:
+        '200':
+          description: Status enrollment; APPROVED berarti credential sudah aktif.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/device-self/commands:
+    get:
+      tags: [DeviceSelf]
+      operationId: fetchCommands
+      summary: Ambil command QUEUED yang belum kedaluwarsa
+      description: |
+        Tidak mengubah state command. Pengiriman at-least-once: command yang sama
+        dikembalikan sampai perangkat mengirim ACK RECEIVED.
+      security:
+        - deviceCredential: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 20, default: 10 }
+      responses:
+        '200':
+          description: Daftar command + serverTime untuk koreksi clock offset.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, serverTime]
+                properties:
+                  serverTime: { type: string, format: date-time }
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeviceCommand'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/device-self/commands/{id}/ack:
+    post:
+      tags: [DeviceSelf]
+      operationId: ackCommand
+      summary: ACK transisi command
+      description: |
+        Perangkat wajib mendapat 200 untuk ACK RECEIVED sebelum mengeksekusi. ACK
+        final tidak dapat diubah (409 FINAL_STATE_ALREADY_SET). `ackId` unik per
+        pengiriman; retry memakai `ackId` yang sama bersifat idempotent.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      security:
+        - deviceCredential: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AckRequest'
+      responses:
+        '200':
+          description: State command setelah ACK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AckResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/device-self/status:
+    post:
+      tags: [DeviceSelf]
+      operationId: reportStatus
+      summary: Kirim snapshot status
+      description: |
+        Snapshot terakhir saja. Nilai yang tidak dapat diamati harus null/unknown,
+        bukan 0/false. Sequence lebih lama diabaikan (`accepted=false`).
+      security:
+        - deviceCredential: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusReport'
+      responses:
+        '200':
+          description: Hasil penerimaan snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted, receivedAt, note]
+                properties:
+                  accepted: { type: boolean }
+                  receivedAt: { type: string, format: date-time }
+                  note: { type: string }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+components:
+  securitySchemes:
+    deviceCredential:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: 'Format: `Device <credential 32+ byte>`. Hanya hash yang disimpan server.'
+    enrollmentToken:
+      type: apiKey
+      in: header
+      name: X-Enrollment-Token
+      description: Claim token dari respons claim; hanya berlaku untuk enrollment terkait.
+
+  parameters:
+    EnrollmentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: Payload tidak valid.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Credential tidak ada, salah, atau sudah dicabut.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Tidak ditemukan pada scope pemanggil (dipakai juga untuk IDOR).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Konflik state atau permintaan yang sudah dipakai.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Gone:
+      description: Kode/enrollment sudah kedaluwarsa.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    RateLimited:
+      description: Terlalu banyak permintaan.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  schemas:
+    ClaimRequest:
+      type: object
+      required: [code, deviceSecret, device]
+      properties:
+        code:
+          type: string
+          pattern: '^\d{8}$'
+        deviceSecret:
+          type: string
+          minLength: 32
+          maxLength: 256
+          description: Dibuat di perangkat; tidak pernah dikembalikan API.
+        device:
+          type: object
+          required: [label, installationId]
+          properties:
+            label: { type: string, maxLength: 60 }
+            installationId: { type: string, minLength: 8, maxLength: 128 }
+            model: { type: string, nullable: true, maxLength: 80 }
+            manufacturer: { type: string, nullable: true, maxLength: 80 }
+            appVersion: { type: string, nullable: true, maxLength: 40 }
+            sdkInt: { type: integer, nullable: true, minimum: 24, maximum: 99 }
+
+    ClaimResponse:
+      type: object
+      required: [enrollmentId, status, claimToken, claimExpiresAt, verificationCode]
+      properties:
+        enrollmentId: { type: string }
+        status: { type: string, enum: [CLAIMED] }
+        claimToken: { type: string }
+        claimExpiresAt: { type: string, format: date-time }
+        verificationCode:
+          type: string
+          description: 6 digit; ditampilkan di Companion dan dicocokkan Parent.
+          pattern: '^\d{6}$'
+        deviceLabel: { type: string, nullable: true }
+
+    EnrollmentStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [OPEN, CLAIMED, LOCAL_CONFIRMED, APPROVED, REJECTED, EXPIRED]
+        deviceLabel: { type: string, nullable: true }
+        verificationCode: { type: string, nullable: true }
+
+    CommandType:
+      type: string
+      enum: [REQUEST_STATUS, LOCK_SCREEN]
+
+    CommandState:
+      type: string
+      enum: [QUEUED, RECEIVED, EXECUTING, SUCCEEDED, FAILED, EXPIRED, CANCELLED]
+
+    AckStatus:
+      type: string
+      description: '`CANCELLED` dibuat server, tidak pernah dikirim perangkat.'
+      enum: [RECEIVED, EXECUTING, SUCCEEDED, FAILED, EXPIRED]
+
+    DeviceCommand:
+      type: object
+      required: [commandId, type, payload, state, createdAt, expiresAt]
+      properties:
+        commandId: { type: string }
+        type: { $ref: '#/components/schemas/CommandType' }
+        payload: { type: object, additionalProperties: true }
+        state: { $ref: '#/components/schemas/CommandState' }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+
+    AckRequest:
+      type: object
+      required: [ackId, status]
+      properties:
+        ackId: { type: string, minLength: 8, maxLength: 128 }
+        status: { $ref: '#/components/schemas/AckStatus' }
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Maksimum 4096 karakter setelah serialisasi.
+        error:
+          type: object
+          nullable: true
+          required: [code]
+          properties:
+            code: { type: string, maxLength: 64 }
+            message: { type: string, maxLength: 500 }
+        observedAt: { type: string, format: date-time, nullable: true }
+
+    AckResponse:
+      type: object
+      required: [commandId, state, idempotent, expiresAt]
+      properties:
+        commandId: { type: string }
+        state: { $ref: '#/components/schemas/CommandState' }
+        idempotent: { type: boolean }
+        expiresAt: { type: string, format: date-time }
+
+    StatusReport:
+      type: object
+      required: [sequence, observedAt]
+      properties:
+        sequence: { type: integer, minimum: 0 }
+        batteryLevel: { type: integer, nullable: true, minimum: 0, maximum: 100 }
+        charging: { type: boolean, nullable: true }
+        networkConnected: { type: boolean, nullable: true }
+        backendReachable: { type: boolean, nullable: true }
+        screenInteractive: { type: boolean, nullable: true }
+        keyguardLocked: { type: boolean, nullable: true }
+        observedAt:
+          type: string
+          format: date-time
+          description: Waktu perangkat; tidak dipakai untuk expiry.
+        capabilities:
+          type: object
+          additionalProperties: { type: boolean, nullable: true }
+        appVersion: { type: string, nullable: true, maxLength: 40 }
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            requestId: { type: string }
+            details: { type: object, additionalProperties: true }

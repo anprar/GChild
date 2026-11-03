@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ikon sederhana: perisai. Tidak meniru tampilan sistem yang rusak. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#1B5E20"
+        android:pathData="M54,12L84,24V52C84,72 70,88 54,96C38,88 24,72 24,52V24L54,12Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,32L68,38V52C68,63 62,72 54,77C46,72 40,63 40,52V38L54,32Z" />
+</vector>

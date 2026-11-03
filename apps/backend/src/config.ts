@@ -11,7 +11,11 @@ const envSchema = z.object({
     .string()
     .min(32, 'PAIRING_CODE_PEPPER minimal 32 karakter acak'),
 
-  TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
+  TELEGRAM_BOT_TOKEN: z.preprocess(
+    // .env.example sengaja mengosongkan token; kosong berarti kanal bot nonaktif.
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().min(1).optional(),
+  ),
   TELEGRAM_PARENT_IDS: z.string().optional(),
   TELEGRAM_NOTIFIER_INTERVAL_MS: z.coerce.number().int().min(1000).default(5000),
 

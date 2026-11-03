@@ -62,7 +62,7 @@ jobs:
           set -euo pipefail
           ARGS=()
           if [ -n "${GCHILD_API_BASE_URL:-}" ]; then
-            ARGS+=("-Pgchild.apiBaseUrl=${GCHILD_API_BASE_URL}")
+            ARGS+=("-Pgchild.debugApiBaseUrl=${GCHILD_API_BASE_URL}")
           fi
           gradle --no-daemon -p apps/companion-android "${ARGS[@]}" :app:assembleDebug
 

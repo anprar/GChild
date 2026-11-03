@@ -5,11 +5,12 @@ plugins {
 
 /**
  * Base URL server:
- * - debug default ke loopback emulator (10.0.2.2) supaya bisa dicoba lokal;
+ * - debug default ke loopback emulator (10.0.2.2) dan boleh http:// untuk sideload
+ *   ke backend LAN lewat -Pgchild.debugApiBaseUrl=http://192.168.x.x:3000;
  * - release tidak punya default: harus diisi lewat -Pgchild.apiBaseUrl=https://...
  *   dan wajib https (cleartext ditolak di network security config release).
  */
-val debugApiBaseUrl: String = providers.gradleProperty("gchild.apiBaseUrl")
+val debugApiBaseUrl: String = providers.gradleProperty("gchild.debugApiBaseUrl")
     .getOrElse("http://10.0.2.2:3000")
 val releaseApiBaseUrl: String = providers.gradleProperty("gchild.apiBaseUrl").getOrElse("")
 

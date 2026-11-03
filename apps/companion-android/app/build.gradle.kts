@@ -40,6 +40,9 @@ if (releaseApiBaseUrl.isEmpty()) {
 android {
     namespace = "com.gchild.companion"
     compileSdk = 37
+    // Android 17 dipublikasikan sebagai platform minor "android-37.2";
+    // tanpa ini AGP mencari platforms/android-37 yang tidak pernah ada.
+    compileSdkMinor = 2
 
     defaultConfig {
         applicationId = "com.gchild.companion"

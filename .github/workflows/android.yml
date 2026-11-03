@@ -41,7 +41,10 @@ jobs:
           fi
           echo "sdkmanager: $SDKM"
           yes | "$SDKM" --licenses > /dev/null 2>&1 || true
-          "$SDKM" --install "platforms;android-37" "build-tools;36.0.0" "platform-tools"
+          # Platform stabil Android 17 dirilis sebagai versi minor (android-37.2),
+          # jadi "platforms;android-37" tidak pernah ada. Versi minor dinyatakan
+          # di Gradle lewat compileSdkMinor = 2.
+          "$SDKM" --install "platforms;android-37.2" "build-tools;37.0.0" "platform-tools"
           echo "platforms: $(ls "$ANDROID_HOME/platforms" | tr '\n' ' ')"
 
       - name: Set up Gradle 9.8.2

@@ -21,8 +21,10 @@ npm-debug.log*
 .yarn/
 .pnpm-store/
 
-# Local database and runtime data
-data/
+# Local database and runtime data (jangan pakai pola "data/" tanpa anchor:
+# itu juga mengabaikan paket Kotlin bernama data)
+/apps/backend/data/
+/tools/device-simulator/data/
 *.sqlite
 *.sqlite3
 *.sqlite-journal

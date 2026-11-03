@@ -56,7 +56,15 @@ jobs:
         run: gradle --no-daemon -p apps/companion-android :app:testDebugUnitTest
 
       - name: Build debug APK
-        run: gradle --no-daemon -p apps/companion-android :app:assembleDebug
+        env:
+          GCHILD_API_BASE_URL: ${{ vars.GCHILD_API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ -n "${GCHILD_API_BASE_URL:-}" ]; then
+            ARGS+=("-Pgchild.apiBaseUrl=${GCHILD_API_BASE_URL}")
+          fi
+          gradle --no-daemon -p apps/companion-android "${ARGS[@]}" :app:assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

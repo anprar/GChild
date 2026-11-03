@@ -7,8 +7,9 @@ keluarga yang sah dikelola.
 
 ## Status
 
-**Tahap 1 — backend + kanal Parent bot Telegram.** Belum ada APK, belum ada deployment,
-belum ada database produksi.
+**Tahap 1 — backend + kanal Parent bot Telegram. Tahap 2 sebagian — APK Companion
+sudah terbangun di CI dan sedang diuji di perangkat fisik; deployment VPS disiapkan di
+`infra/` tetapi belum dijalankan.**
 
 | Komponen | Status |
 |---|---|
@@ -19,9 +20,11 @@ belum ada database produksi.
 | Snapshot status (null/unknown, stale) | Ada, teruji |
 | Audit | Ada |
 | Simulator Companion (`tools/device-simulator`) | Ada, berlabel `SIMULATOR` |
-| Source APK GChild Companion (`apps/companion-android`) | Ada (Kotlin + Compose, SDK 37, minSdk 28). **Belum pernah di-build**: tidak ada Android SDK/JDK 21 di mesin ini dan workflow CI belum dijalankan |
+| Source APK GChild Companion (`apps/companion-android`) | Ada (Kotlin + Compose, SDK 37, minSdk 28) |
+| APK debug Companion | **Terbangun di CI** (artifact terverifikasi, URL server tertanam); pairing di perangkat fisik belum selesai diuji |
 | APK GChild Parent | **Tidak direncanakan** pada tahap ini (lihat ADR-001) |
-| Workflow build APK (`.github/workflows/android.yml`) | Ada; butuh repo Git + remote GitHub + secret signing |
+| Workflow build APK (`.github/workflows/android.yml`) | Berjalan; signing release opsional lewat secret |
+| Pemasangan VPS (`infra/install.sh`, systemd) | Disiapkan, belum dijalankan di VPS mana pun |
 | `contracts/openapi.yaml` | Diperbarui untuk endpoint yang benar-benar ada; belum divalidasi otomatis |
 
 Keputusan mengganti kanal Parent dari APK menjadi bot Telegram dicatat di
@@ -52,8 +55,24 @@ npm run admin:create -w apps/backend -- --telegram-id=<id Telegram> --family-nam
 npm run dev
 ```
 
+`.env` dimuat otomatis oleh script npm lewat `--env-file-if-exists=../../.env` (Node 22),
+jadi tidak perlu `dotenv`. `TELEGRAM_BOT_TOKEN` boleh kosong: kanal bot nonaktif dan
+server tetap jalan.
+
 Buat bot lewat @BotFather, lalu isi `TELEGRAM_BOT_TOKEN` di `.env`. Jangan pernah
 menaruh token di repo, APK, screenshot, atau log.
+
+## Pemasangan di VPS
+
+Backend bisa dipasang di VPS Ubuntu/Debian tanpa scp/copy manual:
+
+```bash
+ssh root@<IP-VPS> 'apt-get update -y && apt-get install -y git && rm -rf /tmp/gchild && git clone https://github.com/anprar/GChild.git /tmp/gchild && bash /tmp/gchild/infra/install.sh'
+```
+
+Installer memasang Node 22, clone/pull kode, membuat `.env` (pepper acak), `npm ci`,
+migrasi, dan service systemd `gchild`. Detail, update, HTTPS, dan backup ada di
+[`infra/README.md`](infra/README.md).
 
 Kirim `/start` ke bot dari akun Telegram yang terdaftar. Perintah yang tersedia:
 
@@ -71,7 +90,7 @@ Kirim `/start` ke bot dari akun Telegram yang terdaftar. Perintah yang tersedia:
 | `/hapus <nomor>` | Cabut akses perangkat (konfirmasi lewat tombol) |
 | `/bantuan` | Ringkasan perintah |
 
-## Android Companion (belum di-build)
+## Android Companion
 
 Source ada di `apps/companion-android`: satu Activity Compose dengan layar onboarding
 (penjelasan data), pairing, persetujuan lokal + kode verifikasi, dan status.
@@ -89,8 +108,10 @@ Toolchain yang dipakai (diverifikasi dari metadata Maven/Google, 2026-11-03):
 
 Build lewat GitHub Actions (`.github/workflows/android.yml`): jalankan workflow
 `Android Companion` secara manual atau push yang menyentuh `apps/companion-android/**`.
-Workflow memasang JDK 21, platform Android 37, build-tools 36.0.0, Gradle 9.8.2, lalu
+Workflow memasang JDK 21, platform Android 37.2, build-tools 37.0.0, Gradle 9.8.2, lalu
 menjalankan unit test JVM + `assembleDebug` dan mengunggah APK sebagai artifact.
+Build debug bisa diarahkan ke backend LAN/VPS lewat repo variable `GCHILD_API_BASE_URL`
+(mis. `http://192.168.1.176:3000`); nilai non-https hanya dipakai build debug.
 
 Signing release memakai secret repo (jangan commit keystore):
 
@@ -132,21 +153,21 @@ Skenario: `connect`, `offline`, `delay-ack`, `duplicate-ack`, `expired`, `status
 | Perintah | Hasil |
 |---|---|
 | `npm run typecheck` | exit 0 (backend + simulator) |
-| `npm test` | 72 test backend (8 file) + 5 test simulator lulus |
+| `npm test` | 75 test backend (9 file) + 5 test simulator lulus |
 | `npm run migrate` | menerapkan `001_init.sql`; pemanggilan kedua no-op |
-| Smoke server lokal | `/v1/healthz` dan `/v1/readyz` merespons 200 tanpa secret |
+| Smoke server lokal | `/v1/healthz` merespons 200 dari loopback dan IP LAN |
+| CI `Android Companion` | run `41606484466` sukses: unit test JVM, `assembleDebug`, artifact `app-debug.apk` terverifikasi berisi URL server |
 
-Cakupan test backend: migrasi, state machine command (transisi sah/tidak sah),
-pairing (kode salah/expired/reuse/hijack/consent/verification code), ownership
-antar keluarga, credential dicabut, antrean penuh, idempotensi ACK, ACK final
-immutable, expiry, cancel race, lease timeout, status unknown/stale/out-of-order,
+Cakupan test backend: migrasi, konfigurasi `.env` (token kosong), state machine command
+(transisi sah/tidak sah), pairing (kode salah/expired/reuse/hijack/consent/verification
+code), ownership antar keluarga, credential dicabut, antrean penuh, idempotensi ACK, ACK
+final immutable, expiry, cancel race, lease timeout, status unknown/stale/out-of-order,
 auth bot Telegram (allowlist + denial), notifikasi hasil, E2E, dan restart backend.
 
-**Belum diuji:** build APK dan unit test Android (tidak ada Android SDK/Gradle di
-mesin ini; workflow GitHub belum dijalankan), perilaku Android (background, Doze,
-force-stop, Device Admin, lock nyata), perangkat fisik, HTTPS/Caddy, Docker,
-backup/restore, VPS, rate limit terdistribusi, validasi OpenAPI otomatis. Jangan
-menyebut fitur-fitur itu andal sebelum diuji.
+**Belum diuji:** pairing/status end-to-end di perangkat fisik (APK sudah terpasang, alur
+belum selesai), perilaku Android (background, Doze, force-stop, Device Admin, lock
+nyata), HTTPS/Caddy, Docker, backup/restore, VPS, rate limit terdistribusi, validasi
+OpenAPI otomatis. Jangan menyebut fitur-fitur itu andal sebelum diuji.
 
 ## Batasan produk yang harus terlihat
 
@@ -178,10 +199,12 @@ menyebut fitur-fitur itu andal sebelum diuji.
 
 ## Langkah berikutnya
 
-1. Push repo ke GitHub, jalankan workflow `Android Companion`, perbaiki kegagalan
-   build pertama (belum pernah dijalankan), lalu unduh APK debug sebagai artifact.
-2. Pasang APK di perangkat fisik, uji pairing/status, dan catat hasil per OEM/API.
-3. Implementasikan Device Admin + `lockNow()` (Tahap 3) agar `LOCK_SCREEN` benar-benar
+1. Selesaikan pairing/status end-to-end di perangkat fisik dan catat hasil per OEM/API.
+2. Pemasangan VPS: jalankan `infra/install.sh`, isi token bot, daftarkan owner, lalu
+   build ulang APK dengan `GCHILD_API_BASE_URL` mengarah ke VPS (HTTPS untuk release).
+3. Tambah sinkronisasi latar (WorkManager periodik) agar command Telegram diambil tanpa
+   aplikasi terbuka; jelaskan tetap best-effort tanpa FCM.
+4. Implementasikan Device Admin + `lockNow()` (Tahap 3) agar `LOCK_SCREEN` benar-benar
    dieksekusi dan dilaporkan dengan bukti.
-4. Tambah validasi OpenAPI otomatis terhadap route dan contoh payload.
-5. Putuskan distribusi Companion dan apakah perlu APK Parent di kemudian hari.
+5. Tambah validasi OpenAPI otomatis terhadap route dan contoh payload.
+6. Putuskan distribusi Companion dan apakah perlu APK Parent di kemudian hari.

@@ -1,0 +1,18 @@
+[Unit]
+Description=GChild backend (Fastify + kanal Parent Telegram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gchild
+Group=gchild
+WorkingDirectory=/opt/gchild/app/apps/backend
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
